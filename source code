@@ -1,0 +1,71 @@
+import snscrape.modules.twitter as sntwitter
+import pandas as pd
+import re
+import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from scipy.special import softmax
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Load emotion classifier
+MODEL = "j-hartmann/emotion-english-distilroberta-base"
+tokenizer = AutoTokenizer.from_pretrained(MODEL)
+model = AutoModelForSequenceClassification.from_pretrained(MODEL)
+model.eval()
+
+def clean_text(text):
+    text = re.sub(r"http\S+", "", text)
+    text = re.sub(r"@\w+", "", text)
+    text = re.sub(r"#\w+", "", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+def fetch_tweets(keyword, max_tweets=100):
+    tweets = []
+    for i, tweet in enumerate(sntwitter.TwitterSearchScraper(f'{keyword} lang:en').get_items()):
+        if i >= max_tweets:
+            break
+        tweets.append(tweet.content)
+    return tweets
+
+def predict_emotion(text):
+    inputs = tokenizer(text, return_tensors="pt", truncation=True)
+    with torch.no_grad():
+        logits = model(**inputs).logits
+    scores = softmax(logits.numpy()[0])
+    labels = model.config.id2label
+    return {labels[i]: float(scores[i]) for i in range(len(scores))}
+
+def analyze_emotions(tweets):
+    emotions = []
+    for tweet in tweets:
+        cleaned = clean_text(tweet)
+        prediction = predict_emotion(cleaned)
+        emotions.append(prediction)
+    return emotions
+
+def summarize_emotions(emotion_results):
+    df = pd.DataFrame(emotion_results)
+    return df.mean().sort_values(ascending=False)
+
+def plot_emotions(summary):
+    plt.figure(figsize=(10, 5))
+    sns.barplot(x=summary.index, y=summary.values, palette="viridis")
+    plt.title("Average Emotion Distribution")
+    plt.ylabel("Score")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.savefig("results/emotion_summary.png")
+    plt.show()
+
+def main():
+    keyword = input("Enter a topic/keyword to analyze: ")
+    tweets = fetch_tweets(keyword, max_tweets=200)
+    print(f"Fetched {len(tweets)} tweets.")
+    emotion_results = analyze_emotions(tweets)
+    summary = summarize_emotions(emotion_results)
+    print(summary)
+    plot_emotions(summary)
+
+if __name__ == "__main__":
+    main()
